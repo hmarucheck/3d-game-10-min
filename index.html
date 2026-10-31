@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Neon Drift</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#05010d;font-family:system-ui,sans-serif;color:#fff}
+  canvas{display:block}
+  #hud{position:fixed;top:16px;left:16px;right:16px;display:flex;justify-content:space-between;pointer-events:none;font-weight:700;letter-spacing:2px;text-shadow:0 0 10px #ff2bd6}
+  #hud .v{font-size:28px}
+  #shield{width:160px;height:8px;border:1px solid #ff2bd6;margin-top:6px}
+  #shield i{display:block;height:100%;background:linear-gradient(90deg,#ff2bd6,#22e4ff);width:100%;transition:width .2s}
+  #menu{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:radial-gradient(circle,rgba(20,0,40,.35),rgba(5,1,13,.85));cursor:pointer}
+  #menu h1{font-size:clamp(48px,10vw,110px);margin:0;font-style:italic;background:linear-gradient(180deg,#fff,#ff2bd6 55%,#7a1bff);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 0 18px #ff2bd6)}
+  #menu p{opacity:.85;letter-spacing:3px;margin:8px 0}
+  .hidden{display:none!important}
+</style>
+</head>
+<body>
+<div id="hud" class="hidden">
+  <div><div>SCORE</div><div class="v" id="score">0</div></div>
+  <div style="text-align:right"><div>SHIELD</div><div id="shield"><i id="shieldBar"></i></div><div id="speed" style="margin-top:6px;font-size:12px">SPEED 1.0x</div></div>
+</div>
+<div id="menu">
+  <h1>NEON DRIFT</h1>
+  <p id="sub">DODGE THE CRYSTALS · COLLECT THE ORBS</p>
+  <p style="font-size:13px">A/D or ←/→ steer · W/S or ↑/↓ climb · touch/mouse works too</p>
+  <p style="margin-top:28px;font-size:20px">▶ CLICK TO START</p>
+</div>
+
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x12021f, 0.012);
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 600);
+camera.position.set(0, 4, 10);
+
+// Sky: gradient dome + synthwave sun
+const sky = new THREE.Mesh(new THREE.SphereGeometry(500, 32, 16), new THREE.ShaderMaterial({
+  side: THREE.BackSide, depthWrite: false, fog: false,
+  vertexShader: `varying vec3 p; void main(){ p = normalize(position); gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
+  fragmentShader: `varying vec3 p; void main(){ float h = p.y;
+    vec3 c = mix(vec3(.55,.05,.45), vec3(.02,.0,.08), smoothstep(-.05,.5,h));
+    c += vec3(1.,.3,.6)*pow(max(0.,1.-abs(h)*6.),3.)*.6;
+    gl_FragColor = vec4(c,1.); }`
+}));
+scene.add(sky);
+
+const sun = new THREE.Mesh(new THREE.CircleGeometry(70, 64), new THREE.ShaderMaterial({
+  transparent: true, fog: false, depthWrite: false,
+  uniforms: { t: { value: 0 } },
+  vertexShader: `varying vec2 v; void main(){ v = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
+  fragmentShader: `uniform float t; varying vec2 v; void main(){
+    vec3 c = mix(vec3(1.,.1,.55), vec3(1.,.85,.2), v.y);
+    float stripe = step(.5, fract(v.y*14. - t*.4)) + step(.55, v.y);
+    if (stripe < .5 && v.y < .55) discard;
+    gl_FragColor = vec4(c*2.2,1.); }`
+}));
+sun.position.set(0, 25, -420);
+scene.add(sun);
+
+// Stars
+{
+  const g = new THREE.BufferGeometry(), n = 3000, a = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const th = Math.random() * Math.PI * 2, ph = Math.random() * Math.PI * 0.45;
+    a.set([Math.cos(th) * Math.sin(ph) * 450, Math.cos(ph) * 450, Math.sin(th) * Math.sin(ph) * 450], i * 3);
+  }
+  g.setAttribute('position', new THREE.BufferAttribute(a, 3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffffff, size: 1.4, fog: false })));
+}
+
+// Terrain: scrolling neon grid with mountain sides
+const terrainMat = new THREE.ShaderMaterial({
+  uniforms: { t: { value: 0 }, fogColor: { value: scene.fog.color } },
+  vertexShader: `uniform float t; varying vec2 w; varying float h; varying float d;
+    float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+    float noise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f);
+      return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }
+    void main(){ vec3 p = position; vec2 q = vec2(p.x, p.z - t);
+      float side = smoothstep(14., 45., abs(p.x));
+      float n = noise(q*.05)*.6 + noise(q*.13)*.3 + noise(q*.4)*.1;
+      p.y = side * n * 38.;
+      w = q; h = p.y; vec4 mv = modelViewMatrix*vec4(p,1.); d = -mv.z;
+      gl_Position = projectionMatrix*mv; }`,
+  fragmentShader: `uniform vec3 fogColor; varying vec2 w; varying float h; varying float d;
+    void main(){ vec2 g = abs(fract(w/4.)-.5)/fwidth(w/4.); float line = 1.-min(min(g.x,g.y),1.);
+      vec3 base = mix(vec3(.03,.0,.07), vec3(.12,.0,.2), clamp(h/30.,0.,1.));
+      vec3 lc = mix(vec3(1.,.15,.85), vec3(.1,.9,1.), clamp(h/25.,0.,1.));
+      vec3 c = base + lc*line*2.5;
+      float f = 1.-exp(-pow(d*.009,2.));
+      gl_FragColor = vec4(mix(c, fogColor, f),1.); }`,
+  extensions: { derivatives: true }
+});
+const terrain = new THREE.Mesh(new THREE.PlaneGeometry(200, 600, 200, 300).rotateX(-Math.PI / 2), terrainMat);
+terrain.position.z = -250;
+scene.add(terrain);
+
+// Lights
+scene.add(new THREE.HemisphereLight(0xff66cc, 0x220044, 0.6));
+const keyLight = new THREE.DirectionalLight(0xffaaff, 2);
+keyLight.position.set(5, 10, 5);
+scene.add(keyLight);
+
+// Player ship
+const ship = new THREE.Group();
+const hullMat = new THREE.MeshStandardMaterial({ color: 0x1a1a2e, metalness: 0.9, roughness: 0.25 });
+const glowMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x22e4ff).multiplyScalar(3) });
+const pinkMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff2bd6).multiplyScalar(3) });
+const body = new THREE.Mesh(new THREE.ConeGeometry(0.55, 2.6, 6).rotateX(-Math.PI / 2), hullMat);
+ship.add(body);
+const wingGeo = new THREE.BoxGeometry(3.2, 0.08, 0.9);
+const wing = new THREE.Mesh(wingGeo, hullMat); wing.position.z = 0.5; ship.add(wing);
+for (const s of [-1, 1]) {
+  const edge = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.3, 1), pinkMat);
+  edge.position.set(1.6 * s, 0.1, 0.5); ship.add(edge);
+  const eng = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.12, 0.3, 12).rotateX(Math.PI / 2), glowMat);
+  eng.position.set(0.5 * s, 0, 1.35); ship.add(eng);
+}
+const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.3, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), glowMat);
+canopy.position.set(0, 0.2, -0.2); canopy.scale.z = 2; ship.add(canopy);
+const shipLight = new THREE.PointLight(0x22e4ff, 8, 12);
+shipLight.position.z = 2; ship.add(shipLight);
+scene.add(ship);
+
+// Engine trail particles
+const TRAIL = 300;
+const trailGeo = new THREE.BufferGeometry();
+const trailPos = new Float32Array(TRAIL * 3), trailLife = new Float32Array(TRAIL);
+trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
+const trail = new THREE.Points(trailGeo, new THREE.PointsMaterial({
+  color: new THREE.Color(0x22e4ff).multiplyScalar(2), size: 0.25, transparent: true, opacity: 0.8,
+  blending: THREE.AdditiveBlending, depthWrite: false
+}));
+scene.add(trail);
+let trailIdx = 0;
+
+// Explosion particles
+const SPARKS = 400;
+const sparkGeo = new THREE.BufferGeometry();
+const sparkPos = new Float32Array(SPARKS * 3), sparkVel = new Float32Array(SPARKS * 3), sparkLife = new Float32Array(SPARKS);
+sparkGeo.setAttribute('position', new THREE.BufferAttribute(sparkPos, 3));
+const sparks = new THREE.Points(sparkGeo, new THREE.PointsMaterial({
+  color: new THREE.Color(0xff66dd).multiplyScalar(3), size: 0.35, transparent: true,
+  blending: THREE.AdditiveBlending, depthWrite: false
+}));
+scene.add(sparks);
+let sparkIdx = 0;
+function burst(p, n, color) {
+  sparks.material.color.copy(color);
+  for (let i = 0; i < n; i++) {
+    const k = sparkIdx++ % SPARKS;
+    sparkPos.set([p.x, p.y, p.z], k * 3);
+    const v = new THREE.Vector3().randomDirection().multiplyScalar(5 + Math.random() * 15);
+    sparkVel.set([v.x, v.y, v.z], k * 3);
+    sparkLife[k] = 1;
+  }
+}
+
+// Obstacles (crystals) and orbs
+const crystalGeo = new THREE.OctahedronGeometry(1.4, 0);
+const crystalMat = new THREE.MeshStandardMaterial({
+  color: 0x330044, emissive: 0xff1188, emissiveIntensity: 1.4, metalness: 0.6, roughness: 0.15, flatShading: true
+});
+const crystalEdgeMat = new THREE.LineBasicMaterial({ color: new THREE.Color(0xffaaee).multiplyScalar(3) });
+const orbGeo = new THREE.IcosahedronGeometry(0.5, 2);
+const orbMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x40ffcc).multiplyScalar(3) });
+const ringGeo = new THREE.TorusGeometry(0.85, 0.05, 8, 40);
+
+const objects = [];
+function spawn(z) {
+  const isOrb = Math.random() < 0.3;
+  let m;
+  if (isOrb) {
+    m = new THREE.Group();
+    m.add(new THREE.Mesh(orbGeo, orbMat));
+    m.add(new THREE.Mesh(ringGeo, orbMat));
+  } else {
+    m = new THREE.Mesh(crystalGeo, crystalMat);
+    m.add(new THREE.LineSegments(new THREE.EdgesGeometry(crystalGeo), crystalEdgeMat));
+    const s = 0.7 + Math.random() * 1.3;
+    m.scale.set(s, s * (1 + Math.random()), s);
+  }
+  m.position.set((Math.random() - 0.5) * 22, 1 + Math.random() * 8, z);
+  m.userData = { orb: isOrb, spin: (Math.random() - 0.5) * 3, r: isOrb ? 1.3 : 1.2 * m.scale.x };
+  scene.add(m);
+  objects.push(m);
+}
+
+// Post-processing
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.85, 0.5, 0.85);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+
+// Input
+const keys = {};
+addEventListener('keydown', e => keys[e.code] = true);
+addEventListener('keyup', e => keys[e.code] = false);
+let pointer = null;
+addEventListener('pointermove', e => { if (e.pointerType !== 'mouse' || e.buttons) pointer = { x: e.clientX / innerWidth * 2 - 1, y: -(e.clientY / innerHeight * 2 - 1) }; });
+addEventListener('pointerup', () => pointer = null);
+
+// Game state
+const $ = id => document.getElementById(id);
+let state = 'menu', score = 0, shield = 100, speed = 40, dist = 0, shake = 0, nextSpawn = 0;
+const vel = new THREE.Vector2();
+
+function start() {
+  objects.forEach(o => scene.remove(o)); objects.length = 0;
+  score = 0; shield = 100; speed = 40; dist = 0; nextSpawn = 0;
+  for (let z = -60; z > -220; z -= 9) spawn(z);
+  ship.position.set(0, 4, 0); ship.visible = true; vel.set(0, 0);
+  state = 'play';
+  $('menu').classList.add('hidden'); $('hud').classList.remove('hidden');
+}
+$('menu').addEventListener('click', start);
+addEventListener('keydown', e => { if (state !== 'play' && (e.code === 'Space' || e.code === 'Enter')) start(); });
+
+function gameOver() {
+  state = 'over'; ship.visible = false;
+  burst(ship.position, 300, new THREE.Color(0xff44cc).multiplyScalar(3));
+  shake = 1.5;
+  setTimeout(() => {
+    $('menu').querySelector('h1').textContent = 'WRECKED';
+    $('sub').textContent = `FINAL SCORE ${Math.floor(score)}`;
+    $('menu').classList.remove('hidden');
+  }, 1200);
+}
+
+const clock = new THREE.Clock();
+const tmp = new THREE.Vector3();
+function tick() {
+  const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
+  const playing = state === 'play';
+  const spd = playing ? speed : 25;
+  dist += spd * dt;
+  terrainMat.uniforms.t.value = dist;
+  sun.material.uniforms.t.value = t;
+
+  if (playing) {
+    speed += dt * 0.8;
+    score += dt * speed * 0.1;
+    let ix = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
+    let iy = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
+    if (pointer) { ix = THREE.MathUtils.clamp((pointer.x * 12 - ship.position.x) / 3, -1, 1); iy = THREE.MathUtils.clamp((pointer.y * 5 + 5 - ship.position.y) / 2, -1, 1); }
+    vel.x = THREE.MathUtils.damp(vel.x, ix * 18, 6, dt);
+    vel.y = THREE.MathUtils.damp(vel.y, iy * 12, 6, dt);
+    ship.position.x = THREE.MathUtils.clamp(ship.position.x + vel.x * dt, -12, 12);
+    ship.position.y = THREE.MathUtils.clamp(ship.position.y + vel.y * dt, 1, 10);
+    ship.rotation.z = THREE.MathUtils.damp(ship.rotation.z, -vel.x * 0.05, 8, dt);
+    ship.rotation.x = THREE.MathUtils.damp(ship.rotation.x, vel.y * 0.03, 8, dt);
+
+    // spawn ahead
+    nextSpawn += spd * dt;
+    const gap = Math.max(3.5, 10 - speed * 0.06);
+    while (nextSpawn > gap) { nextSpawn -= gap; spawn(-220); }
+  } else {
+    ship.position.y = 4 + Math.sin(t * 2) * 0.3;
+  }
+
+  for (let i = objects.length - 1; i >= 0; i--) {
+    const o = objects[i];
+    o.position.z += spd * dt;
+    o.rotation.y += o.userData.spin * dt; o.rotation.x += o.userData.spin * 0.5 * dt;
+    if (o.userData.orb) o.children[1].rotation.x = t * 3;
+    if (playing && ship.visible && o.position.distanceTo(ship.position) < o.userData.r + 0.6) {
+      if (o.userData.orb) {
+        score += 50; shield = Math.min(100, shield + 5);
+        burst(o.position, 40, new THREE.Color(0x40ffcc).multiplyScalar(3));
+      } else {
+        shield -= 34; shake = 0.6;
+        burst(o.position, 80, new THREE.Color(0xff2288).multiplyScalar(3));
+        if (shield <= 0) gameOver();
+      }
+      scene.remove(o); objects.splice(i, 1); continue;
+    }
+    if (o.position.z > 15) { scene.remove(o); objects.splice(i, 1); }
+  }
+
+  // trail
+  if (ship.visible) for (const s of [-0.5, 0.5]) {
+    const k = trailIdx++ % TRAIL;
+    tmp.set(s, 0, 1.5).applyMatrix4(ship.matrixWorld);
+    trailPos.set([tmp.x + (Math.random() - .5) * .1, tmp.y + (Math.random() - .5) * .1, tmp.z], k * 3);
+    trailLife[k] = 1;
+  }
+  for (let k = 0; k < TRAIL; k++) {
+    if (trailLife[k] <= 0) { trailPos[k * 3 + 1] = -999; continue; }
+    trailLife[k] -= dt * 2; trailPos[k * 3 + 2] += spd * dt * 0.6;
+  }
+  trailGeo.attributes.position.needsUpdate = true;
+
+  for (let k = 0; k < SPARKS; k++) {
+    if (sparkLife[k] <= 0) { sparkPos[k * 3 + 1] = -999; continue; }
+    sparkLife[k] -= dt * 0.8;
+    for (let a = 0; a < 3; a++) { sparkPos[k * 3 + a] += sparkVel[k * 3 + a] * dt; sparkVel[k * 3 + a] *= 0.97; }
+    sparkPos[k * 3 + 2] += spd * dt * 0.5;
+  }
+  sparkGeo.attributes.position.needsUpdate = true;
+
+  // camera follow
+  camera.position.x = THREE.MathUtils.damp(camera.position.x, ship.position.x * 0.6, 4, dt);
+  camera.position.y = THREE.MathUtils.damp(camera.position.y, ship.position.y + 2.2, 4, dt);
+  camera.position.z = 8;
+  camera.lookAt(ship.position.x * 0.8, ship.position.y, -10);
+  camera.rotation.z += ship.rotation.z * 0.3;
+  camera.fov = THREE.MathUtils.damp(camera.fov, 65 + (spd - 40) * 0.3, 2, dt);
+  camera.updateProjectionMatrix();
+  if (shake > 0) {
+    camera.position.x += (Math.random() - .5) * shake; camera.position.y += (Math.random() - .5) * shake;
+    shake = Math.max(0, shake - dt * 2);
+  }
+  shipLight.intensity = 6 + Math.sin(t * 30) * 2;
+
+  $('score').textContent = Math.floor(score);
+  $('shieldBar').style.width = Math.max(0, shield) + '%';
+  $('speed').textContent = `SPEED ${(spd / 40).toFixed(1)}x`;
+
+  composer.render();
+  requestAnimationFrame(tick);
+}
+tick();
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
