@@ -3,30 +3,36 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Neon Drift</title>
+<title>Castaway</title>
 <style>
-  html,body{margin:0;height:100%;overflow:hidden;background:#05010d;font-family:system-ui,sans-serif;color:#fff}
+  html,body{margin:0;height:100%;overflow:hidden;background:#87b6d8;font-family:Georgia,serif;color:#fff}
   canvas{display:block}
-  #hud{position:fixed;top:16px;left:16px;right:16px;display:flex;justify-content:space-between;pointer-events:none;font-weight:700;letter-spacing:2px;text-shadow:0 0 10px #ff2bd6}
-  #hud .v{font-size:28px}
-  #shield{width:160px;height:8px;border:1px solid #ff2bd6;margin-top:6px}
-  #shield i{display:block;height:100%;background:linear-gradient(90deg,#ff2bd6,#22e4ff);width:100%;transition:width .2s}
-  #menu{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:radial-gradient(circle,rgba(20,0,40,.35),rgba(5,1,13,.85));cursor:pointer}
-  #menu h1{font-size:clamp(48px,10vw,110px);margin:0;font-style:italic;background:linear-gradient(180deg,#fff,#ff2bd6 55%,#7a1bff);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 0 18px #ff2bd6)}
-  #menu p{opacity:.85;letter-spacing:3px;margin:8px 0}
+  #hud{position:fixed;top:16px;left:16px;pointer-events:none;text-shadow:0 1px 4px #000a}
+  .bar{width:180px;height:10px;background:#0006;border-radius:5px;margin:3px 0 9px;overflow:hidden}
+  .bar i{display:block;height:100%;width:100%;transition:width .3s}
+  #obj{position:fixed;top:16px;right:16px;max-width:300px;text-align:right;text-shadow:0 1px 4px #000a;pointer-events:none;line-height:1.5}
+  #prompt{position:fixed;bottom:18%;left:50%;transform:translateX(-50%);background:#0008;padding:8px 16px;border-radius:6px;pointer-events:none}
+  #msg{position:fixed;top:30%;left:50%;transform:translateX(-50%);font-size:22px;text-shadow:0 2px 6px #000;pointer-events:none;transition:opacity .6s;text-align:center}
+  #menu{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:linear-gradient(#0003,#000a);cursor:pointer;padding:16px}
+  #menu h1{font-size:clamp(46px,9vw,100px);margin:0;letter-spacing:6px;text-shadow:0 4px 20px #000}
+  #menu p{max-width:560px;line-height:1.6;margin:8px 0}
   .hidden{display:none!important}
 </style>
 </head>
 <body>
 <div id="hud" class="hidden">
-  <div><div>SCORE</div><div class="v" id="score">0</div></div>
-  <div style="text-align:right"><div>SHIELD</div><div id="shield"><i id="shieldBar"></i></div><div id="speed" style="margin-top:6px;font-size:12px">SPEED 1.0x</div></div>
+  <div>❤ Health</div><div class="bar"><i id="hp" style="background:#e5484d"></i></div>
+  <div>🍖 Hunger</div><div class="bar"><i id="food" style="background:#f5a524"></i></div>
+  <div>💧 Thirst</div><div class="bar"><i id="water" style="background:#3ea8ff"></i></div>
 </div>
+<div id="obj" class="hidden"></div>
+<div id="prompt" class="hidden"></div>
+<div id="msg"></div>
 <div id="menu">
-  <h1>NEON DRIFT</h1>
-  <p id="sub">DODGE THE CRYSTALS · COLLECT THE ORBS</p>
-  <p style="font-size:13px">A/D or ←/→ steer · W/S or ↑/↓ climb · touch/mouse works too</p>
-  <p style="margin-top:28px;font-size:20px">▶ CLICK TO START</p>
+  <h1>CASTAWAY</h1>
+  <p id="sub">Your flight went down over the Pacific. You're the only survivor. Gather driftwood, stay fed and hydrated, and build a signal fire before it's too late.</p>
+  <p style="font-size:14px;opacity:.85">WASD move · Shift sprint · E pick up / use · drag mouse to look · scroll to zoom</p>
+  <p style="margin-top:24px;font-size:22px">▶ Click to begin</p>
 </div>
 
 <script type="importmap">
@@ -34,6 +40,7 @@
 </script>
 <script type="module">
 import * as THREE from 'three';
+import { Sky } from 'three/addons/objects/Sky.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -43,296 +50,456 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.55;
 renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.FogExp2(0x12021f, 0.012);
-const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 600);
-camera.position.set(0, 4, 10);
+scene.fog = new THREE.Fog(0x9cc0dc, 160, 900);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 3000);
 
-// Sky: gradient dome + synthwave sun
-const sky = new THREE.Mesh(new THREE.SphereGeometry(500, 32, 16), new THREE.ShaderMaterial({
-  side: THREE.BackSide, depthWrite: false, fog: false,
-  vertexShader: `varying vec3 p; void main(){ p = normalize(position); gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
-  fragmentShader: `varying vec3 p; void main(){ float h = p.y;
-    vec3 c = mix(vec3(.55,.05,.45), vec3(.02,.0,.08), smoothstep(-.05,.5,h));
-    c += vec3(1.,.3,.6)*pow(max(0.,1.-abs(h)*6.),3.)*.6;
-    gl_FragColor = vec4(c,1.); }`
-}));
+// ---------- Sky + sun ----------
+const sky = new Sky();
+sky.scale.setScalar(10000);
 scene.add(sky);
+const sunDir = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(68), THREE.MathUtils.degToRad(200));
+sky.material.uniforms.turbidity.value = 6;
+sky.material.uniforms.rayleigh.value = 1.6;
+sky.material.uniforms.mieCoefficient.value = 0.004;
+sky.material.uniforms.mieDirectionalG.value = 0.85;
+sky.material.uniforms.sunPosition.value.copy(sunDir);
 
-const sun = new THREE.Mesh(new THREE.CircleGeometry(70, 64), new THREE.ShaderMaterial({
-  transparent: true, fog: false, depthWrite: false,
-  uniforms: { t: { value: 0 } },
-  vertexShader: `varying vec2 v; void main(){ v = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
-  fragmentShader: `uniform float t; varying vec2 v; void main(){
-    vec3 c = mix(vec3(1.,.1,.55), vec3(1.,.85,.2), v.y);
-    float stripe = step(.5, fract(v.y*14. - t*.4)) + step(.55, v.y);
-    if (stripe < .5 && v.y < .55) discard;
-    gl_FragColor = vec4(c*2.2,1.); }`
-}));
-sun.position.set(0, 25, -420);
-scene.add(sun);
+const pmrem = new THREE.PMREMGenerator(renderer);
+const envScene = new THREE.Scene(); const envSky = new Sky(); envSky.scale.setScalar(1000);
+envSky.material.uniforms.sunPosition.value.copy(sunDir); envScene.add(envSky);
+const envMap = pmrem.fromScene(envScene).texture;
 
-// Stars
-{
-  const g = new THREE.BufferGeometry(), n = 3000, a = new Float32Array(n * 3);
-  for (let i = 0; i < n; i++) {
-    const th = Math.random() * Math.PI * 2, ph = Math.random() * Math.PI * 0.45;
-    a.set([Math.cos(th) * Math.sin(ph) * 450, Math.cos(ph) * 450, Math.sin(th) * Math.sin(ph) * 450], i * 3);
-  }
-  g.setAttribute('position', new THREE.BufferAttribute(a, 3));
-  scene.add(new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffffff, size: 1.4, fog: false })));
+const sun = new THREE.DirectionalLight(0xfff1d6, 3.2);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -40, right: 40, top: 40, bottom: -40, near: 1, far: 200 });
+sun.shadow.bias = -0.0005;
+scene.add(sun, sun.target);
+scene.add(new THREE.HemisphereLight(0xbfe3ff, 0xc9a56a, 1.3));
+
+// ---------- Noise + island heightfield ----------
+const perm = new Uint8Array(512); { const p = [...Array(256).keys()].sort(() => Math.random() - .5); for (let i = 0; i < 512; i++) perm[i] = p[i & 255]; }
+function vnoise(x, y) {
+  const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+  const h = (a, b) => perm[(perm[a & 255] + b) & 255] / 255;
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  return THREE.MathUtils.lerp(THREE.MathUtils.lerp(h(xi, yi), h(xi + 1, yi), u), THREE.MathUtils.lerp(h(xi, yi + 1), h(xi + 1, yi + 1), u), v);
+}
+const fbm = (x, y) => vnoise(x, y) * .5 + vnoise(x * 2.1, y * 2.1) * .25 + vnoise(x * 4.3, y * 4.3) * .125;
+const R = 130;
+function height(x, z) {
+  const r = Math.hypot(x, z) / R + (fbm(x * .02, z * .02) - .45) * .5;
+  const base = (1 - r * r) * 9 - 2.5;
+  const hills = Math.max(0, 1 - r * 1.6) * fbm(x * .03 + 7, z * .03) * 22;
+  return base + hills + (fbm(x * .2, z * .2) - .45) * .5;
 }
 
-// Terrain: scrolling neon grid with mountain sides
-const terrainMat = new THREE.ShaderMaterial({
-  uniforms: { t: { value: 0 }, fogColor: { value: scene.fog.color } },
-  vertexShader: `uniform float t; varying vec2 w; varying float h; varying float d;
-    float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
-    float noise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f);
-      return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }
-    void main(){ vec3 p = position; vec2 q = vec2(p.x, p.z - t);
-      float side = smoothstep(14., 45., abs(p.x));
-      float n = noise(q*.05)*.6 + noise(q*.13)*.3 + noise(q*.4)*.1;
-      p.y = side * n * 38.;
-      w = q; h = p.y; vec4 mv = modelViewMatrix*vec4(p,1.); d = -mv.z;
-      gl_Position = projectionMatrix*mv; }`,
-  fragmentShader: `uniform vec3 fogColor; varying vec2 w; varying float h; varying float d;
-    void main(){ vec2 g = abs(fract(w/4.)-.5)/fwidth(w/4.); float line = 1.-min(min(g.x,g.y),1.);
-      vec3 base = mix(vec3(.03,.0,.07), vec3(.12,.0,.2), clamp(h/30.,0.,1.));
-      vec3 lc = mix(vec3(1.,.15,.85), vec3(.1,.9,1.), clamp(h/25.,0.,1.));
-      vec3 c = base + lc*line*2.5;
-      float f = 1.-exp(-pow(d*.009,2.));
-      gl_FragColor = vec4(mix(c, fogColor, f),1.); }`,
-  extensions: { derivatives: true }
-});
-const terrain = new THREE.Mesh(new THREE.PlaneGeometry(200, 600, 200, 300).rotateX(-Math.PI / 2), terrainMat);
-terrain.position.z = -250;
+const SIZE = 420, SEG = 280;
+const tGeo = new THREE.PlaneGeometry(SIZE, SIZE, SEG, SEG).rotateX(-Math.PI / 2);
+{
+  const pos = tGeo.attributes.position, col = new Float32Array(pos.count * 3), c = new THREE.Color();
+  const wetSand = new THREE.Color(0xb59a6d), sand = new THREE.Color(0xf0dcae), grass = new THREE.Color(0x5d8a3a), jungle = new THREE.Color(0x2f5a24), rock = new THREE.Color(0x7c7468);
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), z = pos.getZ(i), y = height(x, z);
+    pos.setY(i, y);
+    const n = vnoise(x * .3, z * .3) * .12;
+    if (y < 0.3) c.copy(wetSand);
+    else if (y < 2.2 + n * 8) c.copy(sand).lerp(wetSand, Math.max(0, 1 - y) * .5);
+    else if (y < 9) c.copy(grass).lerp(jungle, THREE.MathUtils.smoothstep(y, 3, 9));
+    else c.copy(jungle).lerp(rock, THREE.MathUtils.smoothstep(y, 11, 16));
+    c.offsetHSL(0, 0, n - .06);
+    col.set([c.r, c.g, c.b], i * 3);
+  }
+  tGeo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  tGeo.computeVertexNormals();
+}
+const terrain = new THREE.Mesh(tGeo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 }));
+terrain.receiveShadow = true;
 scene.add(terrain);
 
-// Lights
-scene.add(new THREE.HemisphereLight(0xff66cc, 0x220044, 0.6));
-const keyLight = new THREE.DirectionalLight(0xffaaff, 2);
-keyLight.position.set(5, 10, 5);
-scene.add(keyLight);
+// ---------- Ocean ----------
+const ocean = new THREE.Mesh(new THREE.PlaneGeometry(3000, 3000, 300, 300).rotateX(-Math.PI / 2), new THREE.ShaderMaterial({
+  transparent: true,
+  uniforms: { t: { value: 0 }, sunDir: { value: sunDir }, camPos: { value: camera.position } },
+  vertexShader: `uniform float t; varying vec3 wp; varying vec3 n;
+    vec3 wave(vec2 d, float a, float l, float s, vec3 p, inout vec3 tg, inout vec3 bn){
+      float k = 6.2831/l, f = k*(dot(d,p.xz) - s*t);
+      tg += vec3(-d.x*d.x*a*k*sin(f)*.5, d.x*a*k*cos(f), -d.x*d.y*a*k*sin(f)*.5);
+      bn += vec3(-d.x*d.y*a*k*sin(f)*.5, d.y*a*k*cos(f), -d.y*d.y*a*k*sin(f)*.5);
+      return vec3(d.x*a*cos(f)*.5, a*sin(f), d.y*a*cos(f)*.5); }
+    void main(){ vec3 p = position; vec3 tg = vec3(1,0,0), bn = vec3(0,0,1);
+      float damp = smoothstep(60., 160., length(p.xz)) * .7 + .3;
+      vec3 o = wave(normalize(vec2(1,.3)), .35*damp, 22., 3., p, tg, bn)
+             + wave(normalize(vec2(-.4,1)), .2*damp, 12., 2.5, p, tg, bn)
+             + wave(normalize(vec2(.7,-.6)), .1, 6., 2., p, tg, bn);
+      p += o; n = normalize(cross(bn, tg));
+      vec4 w = modelMatrix*vec4(p,1.); wp = w.xyz; gl_Position = projectionMatrix*viewMatrix*w; }`,
+  fragmentShader: `uniform float t; uniform vec3 sunDir; uniform vec3 camPos; varying vec3 wp; varying vec3 n;
+    float h(vec2 p){ return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453); }
+    float vn(vec2 p){ vec2 i=floor(p),f=fract(p); f=f*f*(3.-2.*f); return mix(mix(h(i),h(i+vec2(1,0)),f.x),mix(h(i+vec2(0,1)),h(i+vec2(1,1)),f.x),f.y); }
+    void main(){
+      vec2 q = wp.xz*.6;
+      vec3 nn = normalize(n + vec3(vn(q+t*.6)-.5, 0., vn(q.yx-t*.5)-.5)*.35);
+      vec3 v = normalize(camPos - wp);
+      float fres = pow(1. - max(dot(nn, v), 0.), 4.);
+      float r = length(wp.xz);
+      float shallow = 1. - smoothstep(95., 175., r);
+      vec3 deep = vec3(.01,.12,.22), lagoon = vec3(.05,.55,.55);
+      vec3 col = mix(deep, lagoon, shallow);
+      vec3 skyc = vec3(.55,.75,.95);
+      col = mix(col, skyc, fres*.75);
+      vec3 hv = normalize(sunDir + v);
+      col += vec3(1.,.95,.8) * pow(max(dot(nn,hv),0.), 300.) * 6.;
+      float foamBand = smoothstep(.55,.9, vn(wp.xz*.25 + t*.2)) * (1. - smoothstep(0., 1., abs(r - 118. - sin(atan(wp.z,wp.x)*5.+t)*3.) / 10.));
+      col = mix(col, vec3(1.), foamBand * .7 + smoothstep(.3,.6,wp.y)*.25);
+      float fogF = smoothstep(200., 1400., length(wp - camPos));
+      col = mix(col, vec3(.66,.78,.88), fogF);
+      gl_FragColor = vec4(col, mix(.82, 1., fres)); }`
+}));
+scene.add(ocean);
 
-// Player ship
-const ship = new THREE.Group();
-const hullMat = new THREE.MeshStandardMaterial({ color: 0x1a1a2e, metalness: 0.9, roughness: 0.25 });
-const glowMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x22e4ff).multiplyScalar(3) });
-const pinkMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff2bd6).multiplyScalar(3) });
-const body = new THREE.Mesh(new THREE.ConeGeometry(0.55, 2.6, 6).rotateX(-Math.PI / 2), hullMat);
-ship.add(body);
-const wingGeo = new THREE.BoxGeometry(3.2, 0.08, 0.9);
-const wing = new THREE.Mesh(wingGeo, hullMat); wing.position.z = 0.5; ship.add(wing);
-for (const s of [-1, 1]) {
-  const edge = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.3, 1), pinkMat);
-  edge.position.set(1.6 * s, 0.1, 0.5); ship.add(edge);
-  const eng = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.12, 0.3, 12).rotateX(Math.PI / 2), glowMat);
-  eng.position.set(0.5 * s, 0, 1.35); ship.add(eng);
+// ---------- Helpers ----------
+const rand = (a, b) => a + Math.random() * (b - a);
+function findSpot(minH, maxH, tries = 200) {
+  for (let i = 0; i < tries; i++) {
+    const x = rand(-140, 140), z = rand(-140, 140), y = height(x, z);
+    if (y > minH && y < maxH) return new THREE.Vector3(x, y, z);
+  }
+  return new THREE.Vector3(0, height(0, 0), 0);
 }
-const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.3, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), glowMat);
-canopy.position.set(0, 0.2, -0.2); canopy.scale.z = 2; ship.add(canopy);
-const shipLight = new THREE.PointLight(0x22e4ff, 8, 12);
-shipLight.position.z = 2; ship.add(shipLight);
-scene.add(ship);
+const shadow = m => { m.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } }); return m; };
 
-// Engine trail particles
-const TRAIL = 300;
-const trailGeo = new THREE.BufferGeometry();
-const trailPos = new Float32Array(TRAIL * 3), trailLife = new Float32Array(TRAIL);
-trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
-const trail = new THREE.Points(trailGeo, new THREE.PointsMaterial({
-  color: new THREE.Color(0x22e4ff).multiplyScalar(2), size: 0.25, transparent: true, opacity: 0.8,
-  blending: THREE.AdditiveBlending, depthWrite: false
-}));
-scene.add(trail);
-let trailIdx = 0;
+// ---------- Palm trees ----------
+const trunkMat = new THREE.MeshStandardMaterial({ color: 0x8a6a45, roughness: 1 });
+const leafMat = new THREE.MeshStandardMaterial({ color: 0x3f8a2a, roughness: .8, side: THREE.DoubleSide });
+const leafGeo = (() => {
+  const g = new THREE.PlaneGeometry(1, 5, 4, 10); const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const y = p.getY(i) + 2.5, x = p.getX(i);
+    const w = Math.sin(y / 5 * Math.PI) * 1.2;
+    p.setXYZ(i, x * w, -y * y * 0.12, y + (Math.abs(x) * .3));
+  }
+  g.computeVertexNormals(); return g;
+})();
+const coconutMat = new THREE.MeshStandardMaterial({ color: 0x5a3a1c, roughness: .7 });
+const palms = [];
+function makePalm(pos) {
+  const g = new THREE.Group(), segs = 9, hgt = rand(6, 10), lean = rand(.8, 2.6), dir = rand(0, Math.PI * 2);
+  let top;
+  for (let i = 0; i < segs; i++) {
+    const t = i / segs, t2 = (i + 1) / segs;
+    const a = new THREE.Vector3(Math.cos(dir) * lean * t * t, hgt * t, Math.sin(dir) * lean * t * t);
+    const b = new THREE.Vector3(Math.cos(dir) * lean * t2 * t2, hgt * t2, Math.sin(dir) * lean * t2 * t2);
+    const s = new THREE.Mesh(new THREE.CylinderGeometry(.22 - t2 * .07, .26 - t * .07, a.distanceTo(b) * 1.05, 8), trunkMat);
+    s.position.copy(a).add(b).multiplyScalar(.5);
+    s.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+    g.add(s); top = b;
+  }
+  for (let i = 0; i < 9; i++) {
+    const l = new THREE.Mesh(leafGeo, leafMat);
+    l.position.copy(top); l.rotation.set(rand(-.5, .1), i / 9 * Math.PI * 2 + rand(-.2, .2), 0, 'YXZ');
+    g.add(l);
+  }
+  for (let i = 0; i < 3; i++) { const c = new THREE.Mesh(new THREE.SphereGeometry(.18, 10, 8), coconutMat); c.position.copy(top).add(new THREE.Vector3(rand(-.3, .3), -.3, rand(-.3, .3))); g.add(c); }
+  g.position.copy(pos); g.position.y -= .2;
+  g.userData.top = top.clone().add(pos);
+  scene.add(shadow(g)); palms.push(g);
+  return g;
+}
+for (let i = 0; i < 70; i++) makePalm(findSpot(1.2, 10));
 
-// Explosion particles
-const SPARKS = 400;
-const sparkGeo = new THREE.BufferGeometry();
-const sparkPos = new Float32Array(SPARKS * 3), sparkVel = new Float32Array(SPARKS * 3), sparkLife = new Float32Array(SPARKS);
-sparkGeo.setAttribute('position', new THREE.BufferAttribute(sparkPos, 3));
-const sparks = new THREE.Points(sparkGeo, new THREE.PointsMaterial({
-  color: new THREE.Color(0xff66dd).multiplyScalar(3), size: 0.35, transparent: true,
-  blending: THREE.AdditiveBlending, depthWrite: false
-}));
-scene.add(sparks);
-let sparkIdx = 0;
-function burst(p, n, color) {
-  sparks.material.color.copy(color);
-  for (let i = 0; i < n; i++) {
-    const k = sparkIdx++ % SPARKS;
-    sparkPos.set([p.x, p.y, p.z], k * 3);
-    const v = new THREE.Vector3().randomDirection().multiplyScalar(5 + Math.random() * 15);
-    sparkVel.set([v.x, v.y, v.z], k * 3);
-    sparkLife[k] = 1;
+// Jungle bushes
+const bushMat = new THREE.MeshStandardMaterial({ color: 0x386b28, roughness: .9, flatShading: true });
+for (let i = 0; i < 140; i++) {
+  const p = findSpot(3, 14), b = new THREE.Mesh(new THREE.IcosahedronGeometry(rand(.8, 2), 1), bushMat);
+  b.position.copy(p); b.scale.y = .7; scene.add(shadow(b));
+}
+// Rocks
+const rockMat = new THREE.MeshStandardMaterial({ color: 0x8a837a, roughness: .9, flatShading: true });
+for (let i = 0; i < 60; i++) {
+  const p = findSpot(-1.5, 4), r = new THREE.Mesh(new THREE.DodecahedronGeometry(rand(.3, 1.6), 0), rockMat);
+  r.position.copy(p); r.rotation.set(rand(0, 3), rand(0, 3), 0); r.scale.y = rand(.4, .9); scene.add(shadow(r));
+}
+
+// ---------- Crashed plane ----------
+const crashPos = (() => { for (let i = 0; i < 500; i++) { const a = rand(0, Math.PI * 2), r = rand(95, 120), x = Math.cos(a) * r, z = Math.sin(a) * r; if (height(x, z) > 0.6 && height(x, z) < 2) return new THREE.Vector3(x, height(x, z), z); } return new THREE.Vector3(100, 1, 0); })();
+const planeMat = new THREE.MeshStandardMaterial({ color: 0xe8ebef, metalness: .3, roughness: .4, envMap, envMapIntensity: .15, side: THREE.DoubleSide });
+const stripeMat = new THREE.MeshStandardMaterial({ color: 0x1f4fa0, metalness: .5, roughness: .4 });
+const charMat = new THREE.MeshStandardMaterial({ color: 0x1b1a19, roughness: 1 });
+const windowMat = new THREE.MeshStandardMaterial({ color: 0x111820, metalness: .8, roughness: .1, envMap, envMapIntensity: .2 });
+const wreck = new THREE.Group();
+{
+  const fus = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 16, 24, 1, true).rotateZ(Math.PI / 2), planeMat); wreck.add(fus);
+  const stripe = new THREE.Mesh(new THREE.CylinderGeometry(2.02, 2.02, 16, 24, 1, true, 0, .5).rotateZ(Math.PI / 2), stripeMat); stripe.rotation.x = 1.1; wreck.add(stripe);
+  const nose = new THREE.Mesh(new THREE.SphereGeometry(2, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2).rotateZ(-Math.PI / 2), planeMat); nose.position.x = 8; nose.scale.x = 2; wreck.add(nose);
+  for (let i = -6; i < 7; i += 1.2) { const w = new THREE.Mesh(new THREE.BoxGeometry(.5, .6, 4.1), windowMat); w.position.set(i, .7, 0); wreck.add(w); }
+  const cock = new THREE.Mesh(new THREE.BoxGeometry(1.2, .6, 2.6), windowMat); cock.position.set(10.2, .9, 0); cock.rotation.z = -.5; wreck.add(cock);
+  const wing = new THREE.Mesh(new THREE.BoxGeometry(5, .35, 13), planeMat); wing.position.set(1, -1, 8); wing.rotation.set(.12, -.25, .05); wreck.add(wing);
+  const eng = new THREE.Mesh(new THREE.CylinderGeometry(.9, .8, 3, 16).rotateZ(Math.PI / 2), stripeMat); eng.position.set(2, -1.9, 6); wreck.add(eng);
+  const stub = new THREE.Mesh(new THREE.BoxGeometry(4, .35, 3), charMat); stub.position.set(1, -1, -3); wreck.add(stub);
+  wreck.add(new THREE.Mesh(new THREE.RingGeometry(1.4, 2, 24).rotateY(Math.PI / 2), charMat).translateX(-8.01));
+  wreck.position.copy(crashPos).add(new THREE.Vector3(0, 1.3, 0));
+  wreck.rotation.set(.08, Math.atan2(-crashPos.z, crashPos.x) + 1.2, -.15);
+  scene.add(shadow(wreck));
+  // Detached tail section further down the beach
+  const tail = new THREE.Group();
+  const tf = new THREE.Mesh(new THREE.CylinderGeometry(1.9, .6, 7, 20, 1, true).rotateZ(Math.PI / 2), planeMat); tail.add(tf);
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(3.5, 4, .25), stripeMat); fin.position.set(-1.8, 2.4, 0); fin.rotation.z = .4; tail.add(fin);
+  const stab = new THREE.Mesh(new THREE.BoxGeometry(2.4, .2, 6), planeMat); stab.position.set(-2, .3, 0); tail.add(stab);
+  const off = new THREE.Vector3(-14, 0, 9).applyAxisAngle(new THREE.Vector3(0, 1, 0), wreck.rotation.y);
+  tail.position.copy(crashPos).add(off); tail.position.y = height(tail.position.x, tail.position.z) + 1.1;
+  tail.rotation.set(-.3, wreck.rotation.y + 2.2, .9);
+  scene.add(shadow(tail));
+  // Debris
+  for (let i = 0; i < 30; i++) {
+    const d = new THREE.Mesh(new THREE.BoxGeometry(rand(.3, 1.5), rand(.05, .2), rand(.3, 1.2)), Math.random() < .5 ? planeMat : charMat);
+    const p = crashPos.clone().add(new THREE.Vector3(rand(-18, 18), 0, rand(-18, 18)));
+    d.position.set(p.x, height(p.x, p.z) + .05, p.z); d.rotation.set(rand(-.3, .3), rand(0, 6), rand(-.3, .3));
+    scene.add(shadow(d));
   }
 }
 
-// Obstacles (crystals) and orbs
-const crystalGeo = new THREE.OctahedronGeometry(1.4, 0);
-const crystalMat = new THREE.MeshStandardMaterial({
-  color: 0x330044, emissive: 0xff1188, emissiveIntensity: 1.4, metalness: 0.6, roughness: 0.15, flatShading: true
-});
-const crystalEdgeMat = new THREE.LineBasicMaterial({ color: new THREE.Color(0xffaaee).multiplyScalar(3) });
-const orbGeo = new THREE.IcosahedronGeometry(0.5, 2);
-const orbMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x40ffcc).multiplyScalar(3) });
-const ringGeo = new THREE.TorusGeometry(0.85, 0.05, 8, 40);
+// ---------- Soft particle texture, fire & smoke ----------
+const softTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d');
+  const g = x.createRadialGradient(32, 32, 0, 32, 32, 32); g.addColorStop(0, '#fff'); g.addColorStop(.4, 'rgba(255,255,255,.5)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = g; x.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c);
+})();
+class Emitter {
+  constructor(n, opts) {
+    this.o = opts; this.list = [];
+    for (let i = 0; i < n; i++) {
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: softTex, color: opts.color.clone(), transparent: true, depthWrite: false, blending: opts.additive ? THREE.AdditiveBlending : THREE.NormalBlending }));
+      s.userData.life = Math.random(); s.userData.v = new THREE.Vector3(); s.visible = false; scene.add(s); this.list.push(s);
+    }
+    this.origin = new THREE.Vector3(); this.rate = 1;
+  }
+  update(dt) {
+    for (const s of this.list) {
+      const u = s.userData; u.life += dt / this.o.life;
+      if (u.life >= 1) {
+        if (Math.random() > this.rate) { s.visible = false; continue; }
+        u.life = 0; s.visible = true;
+        s.position.copy(this.origin).add(new THREE.Vector3(rand(-1, 1) * this.o.spread, 0, rand(-1, 1) * this.o.spread));
+        u.v.set(rand(-.3, .3), this.o.rise * rand(.7, 1.3), rand(-.3, .3));
+      }
+      s.position.addScaledVector(u.v, dt); s.position.x += this.o.wind * dt * u.life;
+      const sc = THREE.MathUtils.lerp(this.o.size[0], this.o.size[1], u.life); s.scale.set(sc, sc, 1);
+      s.material.opacity = Math.sin(u.life * Math.PI) * this.o.alpha;
+      if (this.o.fade) s.material.color.lerpColors(this.o.color, this.o.fade, u.life);
+    }
+  }
+}
+const wreckFire = new Emitter(40, { color: new THREE.Color(3, 1.2, .3), fade: new THREE.Color(1.5, .2, 0), additive: true, life: .9, rise: 3, spread: .6, wind: 0, size: [1.2, .3], alpha: 1 });
+wreckFire.origin.copy(crashPos).add(new THREE.Vector3(0, 2.4, 0));
+const wreckSmoke = new Emitter(60, { color: new THREE.Color(.12, .11, .11), fade: new THREE.Color(.35, .35, .37), life: 7, rise: 3.5, spread: .8, wind: 2.5, size: [2, 9], alpha: .55 });
+wreckSmoke.origin.copy(wreckFire.origin).add(new THREE.Vector3(0, 1, 0));
+const fireLight = new THREE.PointLight(0xff7a2a, 30, 22); fireLight.position.copy(wreckFire.origin); scene.add(fireLight);
 
-const objects = [];
-function spawn(z) {
-  const isOrb = Math.random() < 0.3;
+// ---------- Character ----------
+const player = new THREE.Group();
+const skin = new THREE.MeshStandardMaterial({ color: 0xd9a37a, roughness: .7 });
+const shirt = new THREE.MeshStandardMaterial({ color: 0xe9e4d8, roughness: .9 });
+const pants = new THREE.MeshStandardMaterial({ color: 0x3a4a6a, roughness: .9 });
+const hair = new THREE.MeshStandardMaterial({ color: 0x3a2616, roughness: 1 });
+const torso = new THREE.Mesh(new THREE.CapsuleGeometry(.32, .55, 6, 12), shirt); torso.position.y = 1.25; player.add(torso);
+const head = new THREE.Mesh(new THREE.SphereGeometry(.24, 20, 14), skin); head.position.y = 1.88; player.add(head);
+const hairM = new THREE.Mesh(new THREE.SphereGeometry(.255, 20, 14, 0, Math.PI * 2, 0, Math.PI / 2), hair); hairM.position.y = 1.9; hairM.rotation.x = -.25; player.add(hairM);
+function limb(mat, len, r, x, y) {
+  const pivot = new THREE.Group(); pivot.position.set(x, y, 0);
+  const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 4, 8), mat); m.position.y = -len / 2 - r; pivot.add(m);
+  player.add(pivot); return pivot;
+}
+const armL = limb(skin, .5, .09, -.42, 1.55), armR = limb(skin, .5, .09, .42, 1.55);
+const legL = limb(pants, .55, .12, -.16, .85), legR = limb(pants, .55, .12, .16, .85);
+shadow(player); scene.add(player);
+
+// ---------- Collectibles ----------
+const items = [];
+const woodMat = new THREE.MeshStandardMaterial({ color: 0x9a7650, roughness: 1 });
+const crateMat = new THREE.MeshStandardMaterial({ color: 0x8a6136, roughness: .8 });
+const glowRing = new THREE.Mesh(new THREE.RingGeometry(.7, .85, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xfff2a0, transparent: true, opacity: .8 }));
+scene.add(glowRing);
+function addItem(type, pos) {
   let m;
-  if (isOrb) {
-    m = new THREE.Group();
-    m.add(new THREE.Mesh(orbGeo, orbMat));
-    m.add(new THREE.Mesh(ringGeo, orbMat));
-  } else {
-    m = new THREE.Mesh(crystalGeo, crystalMat);
-    m.add(new THREE.LineSegments(new THREE.EdgesGeometry(crystalGeo), crystalEdgeMat));
-    const s = 0.7 + Math.random() * 1.3;
-    m.scale.set(s, s * (1 + Math.random()), s);
-  }
-  m.position.set((Math.random() - 0.5) * 22, 1 + Math.random() * 8, z);
-  m.userData = { orb: isOrb, spin: (Math.random() - 0.5) * 3, r: isOrb ? 1.3 : 1.2 * m.scale.x };
-  scene.add(m);
-  objects.push(m);
+  if (type === 'wood') { m = new THREE.Mesh(new THREE.CylinderGeometry(.13, .16, rand(1.4, 2.2), 7).rotateZ(Math.PI / 2), woodMat); m.rotation.y = rand(0, 6); m.position.y = .15; }
+  else if (type === 'coconut') { m = new THREE.Mesh(new THREE.SphereGeometry(.2, 12, 10), coconutMat); m.position.y = .2; }
+  else { m = new THREE.Group(); const b = new THREE.Mesh(new THREE.BoxGeometry(.8, .6, .6), crateMat); b.position.y = .3; m.add(b);
+    const cross = new THREE.Mesh(new THREE.BoxGeometry(.82, .12, .62), new THREE.MeshStandardMaterial({ color: 0xc23b2e })); cross.position.y = .45; m.add(cross); }
+  const g = new THREE.Group(); g.add(m); g.position.copy(pos); g.userData.type = type;
+  scene.add(shadow(g)); items.push(g);
 }
+for (let i = 0; i < 16; i++) addItem('wood', findSpot(.4, 4));
+for (const p of palms) if (Math.random() < .6) { const a = rand(0, 6); const x = p.userData.top.x + Math.cos(a) * 1.2, z = p.userData.top.z + Math.sin(a) * 1.2; addItem('coconut', new THREE.Vector3(x, height(x, z), z)); }
+for (let i = 0; i < 6; i++) { const p = crashPos.clone().add(new THREE.Vector3(rand(-25, 25), 0, rand(-25, 25))); p.y = height(p.x, p.z); if (p.y > 0) addItem('crate', p); }
 
-// Post-processing
+// SOS fire site: ring of stones on open beach near the wreck
+const sosPos = (() => { const dir = crashPos.clone().setY(0).normalize(); const side = new THREE.Vector3(-dir.z, 0, dir.x); for (let k = 0; k < 60; k++) { const p = crashPos.clone().addScaledVector(side, 20 + k).addScaledVector(dir, -4); p.y = height(p.x, p.z); if (p.y > .5 && p.y < 2.5) return p; } return crashPos.clone().add(new THREE.Vector3(8, 0, 8)); })();
+for (let i = 0; i < 10; i++) { const a = i / 10 * Math.PI * 2, s = new THREE.Mesh(new THREE.DodecahedronGeometry(.35, 0), rockMat); s.position.set(sosPos.x + Math.cos(a) * 1.6, sosPos.y + .1, sosPos.z + Math.sin(a) * 1.6); scene.add(shadow(s)); }
+const woodPile = new THREE.Group(); woodPile.position.copy(sosPos); scene.add(woodPile);
+const sosFire = new Emitter(70, { color: new THREE.Color(3, 1.3, .3), fade: new THREE.Color(1.6, .2, 0), additive: true, life: 1.1, rise: 5, spread: 1, wind: 0, size: [2.4, .5], alpha: 1 });
+const sosSmoke = new Emitter(90, { color: new THREE.Color(.85, .85, .85), life: 10, rise: 6, spread: 1, wind: 1.5, size: [3, 16], alpha: .7 });
+sosFire.origin.copy(sosPos).add(new THREE.Vector3(0, .5, 0)); sosSmoke.origin.copy(sosPos).add(new THREE.Vector3(0, 3, 0));
+sosFire.rate = sosSmoke.rate = 0;
+const sosLight = new THREE.PointLight(0xff8a3a, 0, 30); sosLight.position.copy(sosPos).add(new THREE.Vector3(0, 2, 0)); scene.add(sosLight);
+
+// Rescue ship
+const ship = new THREE.Group();
+{
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(24, 4, 6), new THREE.MeshStandardMaterial({ color: 0xb22a2a })); ship.add(hull);
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(8, 5, 5), new THREE.MeshStandardMaterial({ color: 0xffffff })); deck.position.set(-4, 4.5, 0); ship.add(deck);
+  const stack = new THREE.Mesh(new THREE.CylinderGeometry(.8, .8, 4), new THREE.MeshStandardMaterial({ color: 0x222222 })); stack.position.set(-4, 8.5, 0); ship.add(stack);
+}
+ship.visible = false; scene.add(shadow(ship));
+
+// ---------- Post ----------
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
-const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.85, 0.5, 0.85);
-composer.addPass(bloom);
+composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), .35, .4, .92));
 composer.addPass(new OutputPass());
 
-// Input
+// ---------- Input ----------
 const keys = {};
-addEventListener('keydown', e => keys[e.code] = true);
+addEventListener('keydown', e => { keys[e.code] = true; if (e.code === 'KeyE') interact(); });
 addEventListener('keyup', e => keys[e.code] = false);
-let pointer = null;
-addEventListener('pointermove', e => { if (e.pointerType !== 'mouse' || e.buttons) pointer = { x: e.clientX / innerWidth * 2 - 1, y: -(e.clientY / innerHeight * 2 - 1) }; });
-addEventListener('pointerup', () => pointer = null);
+let yaw = 0, pitch = .35, dist = 9, dragging = false;
+addEventListener('pointerdown', () => dragging = true);
+addEventListener('pointerup', () => dragging = false);
+addEventListener('pointermove', e => { if (!dragging) return; yaw -= e.movementX * .005; pitch = THREE.MathUtils.clamp(pitch + e.movementY * .004, .05, 1.2); });
+addEventListener('wheel', e => dist = THREE.MathUtils.clamp(dist + e.deltaY * .01, 4, 22));
 
-// Game state
+// ---------- Game state ----------
 const $ = id => document.getElementById(id);
-let state = 'menu', score = 0, shield = 100, speed = 40, dist = 0, shake = 0, nextSpawn = 0;
-const vel = new THREE.Vector2();
+const S = { hp: 100, food: 80, water: 70, wood: 0, placed: 0, lit: false, rescueT: -1, state: 'menu' };
+const NEED = 6;
+let nearest = null, msgTimer = 0;
+function say(t, d = 3) { $('msg').textContent = t; $('msg').style.opacity = 1; msgTimer = d; }
 
-function start() {
-  objects.forEach(o => scene.remove(o)); objects.length = 0;
-  score = 0; shield = 100; speed = 40; dist = 0; nextSpawn = 0;
-  for (let z = -60; z > -220; z -= 9) spawn(z);
-  ship.position.set(0, 4, 0); ship.visible = true; vel.set(0, 0);
-  state = 'play';
-  $('menu').classList.add('hidden'); $('hud').classList.remove('hidden');
-}
-$('menu').addEventListener('click', start);
-addEventListener('keydown', e => { if (state !== 'play' && (e.code === 'Space' || e.code === 'Enter')) start(); });
+const startPos = crashPos.clone().add(new THREE.Vector3(-6, 0, 6));
+player.position.set(startPos.x, height(startPos.x, startPos.z), startPos.z);
+yaw = Math.atan2(player.position.x - crashPos.x, player.position.z - crashPos.z);
 
-function gameOver() {
-  state = 'over'; ship.visible = false;
-  burst(ship.position, 300, new THREE.Color(0xff44cc).multiplyScalar(3));
-  shake = 1.5;
-  setTimeout(() => {
-    $('menu').querySelector('h1').textContent = 'WRECKED';
-    $('sub').textContent = `FINAL SCORE ${Math.floor(score)}`;
-    $('menu').classList.remove('hidden');
-  }, 1200);
-}
+$('menu').addEventListener('click', () => {
+  if (S.state === 'menu') { S.state = 'play'; $('menu').classList.add('hidden'); ['hud', 'obj'].forEach(i => $(i).classList.remove('hidden')); say('You wake up on the sand. The plane is burning...', 4); }
+  else location.reload();
+});
 
-const clock = new THREE.Clock();
-const tmp = new THREE.Vector3();
-function tick() {
-  const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
-  const playing = state === 'play';
-  const spd = playing ? speed : 25;
-  dist += spd * dt;
-  terrainMat.uniforms.t.value = dist;
-  sun.material.uniforms.t.value = t;
-
-  if (playing) {
-    speed += dt * 0.8;
-    score += dt * speed * 0.1;
-    let ix = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
-    let iy = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
-    if (pointer) { ix = THREE.MathUtils.clamp((pointer.x * 12 - ship.position.x) / 3, -1, 1); iy = THREE.MathUtils.clamp((pointer.y * 5 + 5 - ship.position.y) / 2, -1, 1); }
-    vel.x = THREE.MathUtils.damp(vel.x, ix * 18, 6, dt);
-    vel.y = THREE.MathUtils.damp(vel.y, iy * 12, 6, dt);
-    ship.position.x = THREE.MathUtils.clamp(ship.position.x + vel.x * dt, -12, 12);
-    ship.position.y = THREE.MathUtils.clamp(ship.position.y + vel.y * dt, 1, 10);
-    ship.rotation.z = THREE.MathUtils.damp(ship.rotation.z, -vel.x * 0.05, 8, dt);
-    ship.rotation.x = THREE.MathUtils.damp(ship.rotation.x, vel.y * 0.03, 8, dt);
-
-    // spawn ahead
-    nextSpawn += spd * dt;
-    const gap = Math.max(3.5, 10 - speed * 0.06);
-    while (nextSpawn > gap) { nextSpawn -= gap; spawn(-220); }
-  } else {
-    ship.position.y = 4 + Math.sin(t * 2) * 0.3;
-  }
-
-  for (let i = objects.length - 1; i >= 0; i--) {
-    const o = objects[i];
-    o.position.z += spd * dt;
-    o.rotation.y += o.userData.spin * dt; o.rotation.x += o.userData.spin * 0.5 * dt;
-    if (o.userData.orb) o.children[1].rotation.x = t * 3;
-    if (playing && ship.visible && o.position.distanceTo(ship.position) < o.userData.r + 0.6) {
-      if (o.userData.orb) {
-        score += 50; shield = Math.min(100, shield + 5);
-        burst(o.position, 40, new THREE.Color(0x40ffcc).multiplyScalar(3));
-      } else {
-        shield -= 34; shake = 0.6;
-        burst(o.position, 80, new THREE.Color(0xff2288).multiplyScalar(3));
-        if (shield <= 0) gameOver();
+const sosMarker = new THREE.Object3D(); sosMarker.position.copy(sosPos); sosMarker.userData.type = 'sos';
+function interact() {
+  if (S.state !== 'play' || !nearest) return;
+  const t = nearest.userData.type;
+  if (t === 'sos') {
+    if (S.wood > 0 && S.placed < NEED) {
+      while (S.wood > 0 && S.placed < NEED) {
+        S.wood--; const i = S.placed++; const l = new THREE.Mesh(new THREE.CylinderGeometry(.13, .16, 1.8, 7), woodMat);
+        const a = i / NEED * Math.PI * 2; l.position.set(Math.cos(a) * .35, .8, Math.sin(a) * .35); l.rotation.set(Math.sin(a) * .45, 0, -Math.cos(a) * .45); woodPile.add(shadow(l));
       }
-      scene.remove(o); objects.splice(i, 1); continue;
+      say(S.placed >= NEED ? 'The signal fire is ready. Press E to light it!' : `Signal fire: ${S.placed}/${NEED} wood`);
+    } else if (S.placed >= NEED && !S.lit) {
+      S.lit = true; sosFire.rate = sosSmoke.rate = 1; S.rescueT = 0;
+      say('🔥 The signal fire roars! Thick smoke rises into the sky...', 5);
+    } else if (!S.lit) say('You need driftwood for the fire.');
+    return;
+  }
+  scene.remove(nearest); items.splice(items.indexOf(nearest), 1);
+  if (t === 'wood') { S.wood++; say(`Picked up driftwood (${S.wood + S.placed}/${NEED})`, 2); }
+  if (t === 'coconut') { S.food = Math.min(100, S.food + 25); S.water = Math.min(100, S.water + 10); say('Cracked open a coconut. Delicious.', 2); }
+  if (t === 'crate') { S.water = Math.min(100, S.water + 45); S.food = Math.min(100, S.food + 15); say('Found bottled water and snacks in a supply crate!', 2.5); }
+}
+
+function end(win) {
+  S.state = 'over';
+  setTimeout(() => {
+    $('menu').querySelector('h1').textContent = win ? 'RESCUED' : 'LOST';
+    $('sub').textContent = win ? 'A ship spotted your smoke. You are going home. Click to play again.' : 'The island claimed another soul. Click to try again.';
+    $('menu').classList.remove('hidden');
+  }, win ? 2500 : 800);
+}
+
+// ---------- Loop ----------
+const clock = new THREE.Clock();
+const camTarget = player.position.clone();
+let walkPhase = 0;
+function tick() {
+  const dt = Math.min(clock.getDelta(), .05), t = clock.elapsedTime;
+  ocean.material.uniforms.t.value = t;
+
+  if (S.state === 'play') {
+    const f = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
+    const s = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
+    const moving = f || s;
+    const sprint = keys.ShiftLeft || keys.ShiftRight;
+    const spd = sprint ? 8 : 4.2;
+    if (moving) {
+      const ang = Math.atan2(s, -f) + yaw;
+      const nx = player.position.x + Math.sin(ang) * spd * dt, nz = player.position.z + Math.cos(ang) * spd * dt;
+      const nh = height(nx, nz);
+      if (nh > -0.9 && nh - player.position.y < 1.2) { player.position.x = nx; player.position.z = nz; }
+      let d = ang - player.rotation.y; d = Math.atan2(Math.sin(d), Math.cos(d));
+      player.rotation.y += d * Math.min(1, dt * 12);
+      walkPhase += dt * spd * 2.2;
+    } else walkPhase *= .9;
+    const sw = Math.sin(walkPhase) * (moving ? (sprint ? .9 : .6) : 0);
+    armL.rotation.x = sw; armR.rotation.x = -sw; legL.rotation.x = -sw; legR.rotation.x = sw;
+    const gy = height(player.position.x, player.position.z);
+    player.position.y = THREE.MathUtils.damp(player.position.y, Math.max(gy, -0.9), 20, dt);
+
+    S.food -= dt * (sprint && moving ? .9 : .5);
+    S.water -= dt * (sprint && moving ? 1.3 : .75);
+    if (gy < 0) S.water -= dt * .5; // salt water makes it worse
+    if (S.food <= 0 || S.water <= 0) S.hp -= dt * 6; else if (S.food > 40 && S.water > 40) S.hp = Math.min(100, S.hp + dt * 1.5);
+    S.food = Math.max(0, S.food); S.water = Math.max(0, S.water);
+    if (S.hp <= 0) end(false);
+
+    nearest = null; let best = 2.2;
+    for (const it of items) { const d = it.position.distanceTo(player.position); if (d < best) { best = d; nearest = it; } }
+    if (!nearest && sosMarker.position.distanceTo(player.position) < 3.5) nearest = sosMarker;
+    glowRing.visible = !!nearest && nearest !== sosMarker;
+    if (glowRing.visible) { glowRing.position.copy(nearest.position).y += .05; glowRing.scale.setScalar(1 + Math.sin(t * 5) * .08); }
+    const labels = { wood: 'pick up driftwood', coconut: 'eat coconut', crate: 'open supply crate', sos: S.wood ? 'add wood to signal fire' : (S.placed >= NEED ? 'light the signal fire' : 'signal fire site (needs wood)') };
+    $('prompt').classList.toggle('hidden', !nearest || (nearest === sosMarker && S.lit));
+    if (nearest) $('prompt').textContent = `[E] ${labels[nearest.userData.type]}`;
+
+    const toSos = sosPos.clone().sub(player.position); const far = toSos.length();
+    $('obj').innerHTML = S.lit ? '<b>Wait for rescue...</b><br>Keep yourself alive.' :
+      `<b>Build a signal fire</b><br>Driftwood: ${S.wood} carried · ${S.placed}/${NEED} placed<br><span style="font-size:13px;opacity:.85">Stone ring on the beach: ${far.toFixed(0)}m away</span>`;
+
+    if (S.rescueT >= 0) {
+      S.rescueT += dt;
+      if (S.rescueT > 8 && !ship.visible) { ship.visible = true; say('🚢 A SHIP ON THE HORIZON!', 5); }
+      if (ship.visible) {
+        const dir = sosPos.clone().setY(0).normalize();
+        const k = Math.min(1, (S.rescueT - 8) / 25);
+        ship.position.copy(dir.clone().multiplyScalar(THREE.MathUtils.lerp(600, 175, k))); ship.position.y = Math.sin(t) * .3 + 1;
+        ship.rotation.y = Math.atan2(-dir.z, dir.x) + Math.PI / 2; ship.rotation.z = Math.sin(t * .8) * .03;
+        if (k >= 1 && S.state === 'play') { say('You hear a horn blast. You are saved!', 5); end(true); }
+      }
     }
-    if (o.position.z > 15) { scene.remove(o); objects.splice(i, 1); }
-  }
+  } else if (S.state === 'menu') yaw += dt * .05;
 
-  // trail
-  if (ship.visible) for (const s of [-0.5, 0.5]) {
-    const k = trailIdx++ % TRAIL;
-    tmp.set(s, 0, 1.5).applyMatrix4(ship.matrixWorld);
-    trailPos.set([tmp.x + (Math.random() - .5) * .1, tmp.y + (Math.random() - .5) * .1, tmp.z], k * 3);
-    trailLife[k] = 1;
-  }
-  for (let k = 0; k < TRAIL; k++) {
-    if (trailLife[k] <= 0) { trailPos[k * 3 + 1] = -999; continue; }
-    trailLife[k] -= dt * 2; trailPos[k * 3 + 2] += spd * dt * 0.6;
-  }
-  trailGeo.attributes.position.needsUpdate = true;
+  for (const p of palms) p.rotation.z = Math.sin(t * .8 + p.position.x) * .015;
 
-  for (let k = 0; k < SPARKS; k++) {
-    if (sparkLife[k] <= 0) { sparkPos[k * 3 + 1] = -999; continue; }
-    sparkLife[k] -= dt * 0.8;
-    for (let a = 0; a < 3; a++) { sparkPos[k * 3 + a] += sparkVel[k * 3 + a] * dt; sparkVel[k * 3 + a] *= 0.97; }
-    sparkPos[k * 3 + 2] += spd * dt * 0.5;
-  }
-  sparkGeo.attributes.position.needsUpdate = true;
+  wreckFire.update(dt); wreckSmoke.update(dt); sosFire.update(dt); sosSmoke.update(dt);
+  fireLight.intensity = 25 + Math.sin(t * 20) * 6 + Math.random() * 6;
+  sosLight.intensity = S.lit ? 40 + Math.sin(t * 17) * 8 + Math.random() * 8 : 0;
 
-  // camera follow
-  camera.position.x = THREE.MathUtils.damp(camera.position.x, ship.position.x * 0.6, 4, dt);
-  camera.position.y = THREE.MathUtils.damp(camera.position.y, ship.position.y + 2.2, 4, dt);
-  camera.position.z = 8;
-  camera.lookAt(ship.position.x * 0.8, ship.position.y, -10);
-  camera.rotation.z += ship.rotation.z * 0.3;
-  camera.fov = THREE.MathUtils.damp(camera.fov, 65 + (spd - 40) * 0.3, 2, dt);
-  camera.updateProjectionMatrix();
-  if (shake > 0) {
-    camera.position.x += (Math.random() - .5) * shake; camera.position.y += (Math.random() - .5) * shake;
-    shake = Math.max(0, shake - dt * 2);
-  }
-  shipLight.intensity = 6 + Math.sin(t * 30) * 2;
+  // Camera
+  camTarget.lerp(player.position.clone().add(new THREE.Vector3(0, 1.6, 0)), 1 - Math.exp(-dt * 10));
+  const cp = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(dist).add(camTarget);
+  cp.y = Math.max(cp.y, height(cp.x, cp.z) + .6, .4);
+  camera.position.copy(cp); camera.lookAt(camTarget);
 
-  $('score').textContent = Math.floor(score);
-  $('shieldBar').style.width = Math.max(0, shield) + '%';
-  $('speed').textContent = `SPEED ${(spd / 40).toFixed(1)}x`;
+  sun.position.copy(player.position).addScaledVector(sunDir, 80);
+  sun.target.position.copy(player.position);
+
+  if (msgTimer > 0) { msgTimer -= dt; if (msgTimer <= 0) $('msg').style.opacity = 0; }
+  $('hp').style.width = S.hp + '%'; $('food').style.width = S.food + '%'; $('water').style.width = S.water + '%';
 
   composer.render();
   requestAnimationFrame(tick);
